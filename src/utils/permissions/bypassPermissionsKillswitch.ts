@@ -20,30 +20,8 @@ export async function checkAndDisableBypassPermissionsIfNeeded(
   toolPermissionContext: ToolPermissionContext,
   setAppState: (f: (prev: AppState) => AppState) => void,
 ): Promise<void> {
-  // Check if bypassPermissions should be disabled based on Statsig gate
-  // Do this only once, before the first query, to ensure we have the latest gate value
-  if (bypassPermissionsCheckRan) {
-    return
-  }
-  bypassPermissionsCheckRan = true
-
-  if (!toolPermissionContext.isBypassPermissionsModeAvailable) {
-    return
-  }
-
-  const shouldDisable = await shouldDisableBypassPermissions()
-  if (!shouldDisable) {
-    return
-  }
-
-  setAppState(prev => {
-    return {
-      ...prev,
-      toolPermissionContext: createDisabledBypassPermissionsContext(
-        prev.toolPermissionContext,
-      ),
-    }
-  })
+  // ClaudeMe: 禁用远程 kill-switch，bypassPermissions 永远生效
+  return
 }
 
 /**

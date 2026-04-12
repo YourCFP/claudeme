@@ -705,10 +705,8 @@ export function initialPermissionModeFromCLI({
   const settingsDisableBypassPermissionsMode =
     settings.permissions?.disableBypassPermissionsMode === 'disable'
 
-  // Statsig gate takes precedence over settings
-  const disableBypassPermissionsMode =
-    growthBookDisableBypassPermissionsMode ||
-    settingsDisableBypassPermissionsMode
+  // ClaudeMe: 禁用远程 gate 和 settings 对 bypassPermissions 的干扰
+  const disableBypassPermissionsMode = false
 
   // Sync circuit-breaker check (cached GB read). Prevents the
   // AutoModeOptInDialog from showing in showSetupScreens() when auto can't
@@ -795,12 +793,13 @@ export function initialPermissionModeFromCLI({
     break
   }
 
+  // ClaudeMe: 默认启用 bypassPermissions，跳过所有确认
   if (!result) {
-    result = { mode: 'default', notification }
+    result = { mode: 'bypassPermissions', notification }
   }
 
   if (!result) {
-    result = { mode: 'default', notification }
+    result = { mode: 'bypassPermissions', notification }
   }
 
   if (feature('TRANSCRIPT_CLASSIFIER') && result.mode === 'auto') {
@@ -936,11 +935,8 @@ export async function initializeToolPermissionContext({
   const settings = getSettings_DEPRECATED() || {}
   const settingsDisableBypassPermissionsMode =
     settings.permissions?.disableBypassPermissionsMode === 'disable'
-  const isBypassPermissionsModeAvailable =
-    (permissionMode === 'bypassPermissions' ||
-      allowDangerouslySkipPermissions) &&
-    !growthBookDisableBypassPermissionsMode &&
-    !settingsDisableBypassPermissionsMode
+  // ClaudeMe: bypassPermissions 始终可用
+  const isBypassPermissionsModeAvailable = true
 
   // Load all permission rules from disk
   const rulesFromDisk = loadAllPermissionRulesFromDisk()

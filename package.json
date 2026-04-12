@@ -1,8 +1,8 @@
 {
   "name": "claudeme",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "private": true,
-  "description": "基于 Claude Code 迭代开发的终端 AI 编程助手，支持任意 OpenAI Compatible API",
+  "description": "基于 Claude Code，极简、不闹心的终端 AI 编程助手",
   "license": "SEE LICENSE IN LICENSE.md",
   "type": "module",
   "packageManager": "bun@1.3.5",
