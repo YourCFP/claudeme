@@ -211,6 +211,8 @@ export interface ScanOptions {
   readonly signal?: AbortSignal
   /** 进度回调 */
   readonly onProgress?: ScanProgressCallback
+  /** 文件发现后回调，可用于拿到整次扫描总数 */
+  readonly onDiscovered?: (info: { readonly filesFound: number; readonly filesNew: number }) => void
 }
 
 export async function scan(options?: ScanOptions): Promise<ScanResult> {
@@ -227,6 +229,7 @@ export async function scan(options?: ScanOptions): Promise<ScanResult> {
 
   const signal = options?.signal
   const batchSize = options?.batchSize ?? 100
+  const onDiscovered = options?.onDiscovered
 
   // 获取已处理的文件 hash 前缀
   const processedHashes = getProcessedHashes()
@@ -254,6 +257,11 @@ export async function scan(options?: ScanOptions): Promise<ScanResult> {
       // 跳过读取失败的文件
     }
   }
+
+  onDiscovered?.({
+    filesFound: allFiles.length,
+    filesNew: newFiles.length,
+  })
 
   // 截取本次批次
   const batch = batchSize > 0 ? newFiles.slice(0, batchSize) : newFiles
@@ -392,87 +400,174 @@ export function clearScanProgress(): void {
 
 // ─── 全局 abort 控制器（用于 /wiki stop） ───
 
-let activeScanAbort: AbortController | null = null
+interface ActiveScanState {
+  readonly abortController: AbortController
+  readonly startedAt: string
+  readonly totalFiles: number
+}
+
+let activeScanState: ActiveScanState | null = null
 
 /** 获取当前是否有扫描在跑 */
 export function isScanRunning(): boolean {
-  return activeScanAbort !== null
+  return activeScanState !== null
 }
 
 /** 停止当前后台扫描 */
 export function stopScan(): boolean {
-  if (activeScanAbort) {
-    activeScanAbort.abort()
-    activeScanAbort = null
-    return true
+  if (!activeScanState) {
+    return false
   }
-  return false
+
+  const stoppedScan = activeScanState
+  stoppedScan.abortController.abort()
+  activeScanState = null
+
+  const currentProgress = readScanProgress()
+  writeScanProgress({
+    status: 'done',
+    startedAt: stoppedScan.startedAt,
+    updatedAt: new Date().toISOString(),
+    current: currentProgress?.current ?? 0,
+    total: currentProgress?.total ?? currentProgress?.current ?? 0,
+    processed: currentProgress?.processed ?? 0,
+    failed: currentProgress?.failed ?? 0,
+    lastFile: currentProgress?.lastFile ?? '',
+    summary: buildScanSummary({
+      filesFound: currentProgress?.total ?? currentProgress?.current ?? 0,
+      filesNew: currentProgress?.total ?? currentProgress?.current ?? 0,
+      filesAttempted: currentProgress?.current ?? 0,
+      filesProcessed: currentProgress?.processed ?? 0,
+      filesFailed: currentProgress?.failed ?? 0,
+      filesRemaining: Math.max((currentProgress?.total ?? 0) - (currentProgress?.current ?? 0), 0),
+      cancelled: true,
+    }),
+  })
+
+  return true
 }
 
 /** 后台启动扫描（不阻塞，进度写文件） */
+function buildScanSummary(result: {
+  readonly filesFound: number
+  readonly filesNew: number
+  readonly filesAttempted: number
+  readonly filesProcessed: number
+  readonly filesFailed: number
+  readonly filesRemaining: number
+  readonly cancelled: boolean
+}): string {
+  return `发现 ${result.filesFound} 文件, 新增 ${result.filesNew}, 本批处理 ${result.filesAttempted}, 成功 ${result.filesProcessed}, 失败 ${result.filesFailed}${result.filesRemaining > 0 ? `, 剩余 ${result.filesRemaining}` : ''}${result.cancelled ? ' (已取消)' : ''}`
+}
+
+function writeRunningScanProgress(params: {
+  readonly startedAt: string
+  readonly current: number
+  readonly total: number
+  readonly processed: number
+  readonly failed: number
+  readonly lastFile: string
+}): void {
+  if (activeScanState?.startedAt !== params.startedAt) {
+    return
+  }
+
+  writeScanProgress({
+    status: 'running',
+    startedAt: params.startedAt,
+    updatedAt: new Date().toISOString(),
+    current: params.current,
+    total: params.total,
+    processed: params.processed,
+    failed: params.failed,
+    lastFile: params.lastFile,
+  })
+}
+
 export function scanBackground(options?: Omit<ScanOptions, 'signal' | 'onProgress'>): void {
-  if (activeScanAbort) {
+  if (activeScanState) {
     throw new Error('已有扫描任务在运行中。使用 /wiki stop 停止当前扫描。')
   }
 
-  const ac = new AbortController()
-  activeScanAbort = ac
+  const abortController = new AbortController()
+  const startedAt = new Date().toISOString()
+  const batchSize = options?.batchSize ?? 100
+  let completedBeforeCurrentBatch = 0
+  let totalFiles = 0
 
-  const now = new Date().toISOString()
-  writeScanProgress({
-    status: 'running',
-    startedAt: now,
-    updatedAt: now,
-    current: 0,
-    total: 0,
-    processed: 0,
-    failed: 0,
-    lastFile: '',
-  })
+  activeScanState = { abortController, startedAt, totalFiles: 0 }
 
-  // 不 await — 后台运行
-  scan({
-    ...options,
-    signal: ac.signal,
-    onProgress: (progress) => {
-      writeScanProgress({
-        status: 'running',
-        startedAt: now,
-        updatedAt: new Date().toISOString(),
-        current: progress.current,
-        total: progress.total,
-        processed: 0, // 会在结果中统计
-        failed: 0,
-        lastFile: progress.file,
+  const runScanLoop = async (): Promise<void> => {
+    while (true) {
+      const result = await scan({
+        ...options,
+        signal: abortController.signal,
+        onDiscovered: (info) => {
+          if (totalFiles === 0) {
+            totalFiles = info.filesNew
+            activeScanState = { abortController, startedAt, totalFiles }
+          }
+        },
+        onProgress: (progress) => {
+          writeRunningScanProgress({
+            startedAt,
+            current: completedBeforeCurrentBatch + progress.current,
+            total: totalFiles > 0 ? totalFiles : progress.total,
+            processed: completedBeforeCurrentBatch,
+            failed: 0,
+            lastFile: progress.file,
+          })
+        },
       })
-    },
-  })
-    .then((result) => {
-      writeScanProgress({
-        status: 'done',
-        startedAt: now,
-        updatedAt: new Date().toISOString(),
-        current: result.filesAttempted,
-        total: result.filesAttempted,
-        processed: result.filesProcessed,
-        failed: result.filesFailed,
-        lastFile: '',
-        summary: `发现 ${result.filesFound} 文件, 新增 ${result.filesNew}, 本批处理 ${result.filesAttempted}, 成功 ${result.filesProcessed}, 失败 ${result.filesFailed}${result.filesRemaining > 0 ? `, 剩余 ${result.filesRemaining}` : ''}${result.cancelled ? ' (已取消)' : ''}`,
-      })
-      activeScanAbort = null
-    })
+
+      completedBeforeCurrentBatch += result.filesAttempted
+
+      if (abortController.signal.aborted || result.cancelled || result.filesRemaining <= 0 || batchSize === 0) {
+        if (activeScanState?.startedAt === startedAt) {
+          writeScanProgress({
+            status: 'done',
+            startedAt,
+            updatedAt: new Date().toISOString(),
+            current: completedBeforeCurrentBatch,
+            total: totalFiles > 0 ? totalFiles : completedBeforeCurrentBatch,
+            processed: result.filesProcessed,
+            failed: result.filesFailed,
+            lastFile: '',
+            summary: buildScanSummary({
+              filesFound: result.filesFound,
+              filesNew: totalFiles,
+              filesAttempted: completedBeforeCurrentBatch,
+              filesProcessed: result.filesProcessed,
+              filesFailed: result.filesFailed,
+              filesRemaining: result.filesRemaining,
+              cancelled: abortController.signal.aborted || result.cancelled,
+            }),
+          })
+        }
+        return
+      }
+    }
+  }
+
+  runScanLoop()
     .catch((err) => {
-      writeScanProgress({
-        status: 'error',
-        startedAt: now,
-        updatedAt: new Date().toISOString(),
-        current: 0,
-        total: 0,
-        processed: 0,
-        failed: 0,
-        lastFile: '',
-        error: err instanceof Error ? err.message : String(err),
-      })
-      activeScanAbort = null
+      if (activeScanState?.startedAt === startedAt) {
+        writeScanProgress({
+          status: 'error',
+          startedAt,
+          updatedAt: new Date().toISOString(),
+          current: 0,
+          total: 0,
+          processed: 0,
+          failed: 0,
+          lastFile: '',
+          error: err instanceof Error ? err.message : String(err),
+        })
+      }
+    })
+    .finally(() => {
+      if (activeScanState?.startedAt === startedAt) {
+        activeScanState = null
+      }
     })
 }
