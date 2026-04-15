@@ -233,6 +233,31 @@ claudeme
 
 `bun link` 会在 `~/.bun/bin/` 创建符号链接指向项目，无需每次 cd 到项目目录。更新代码只需 `git pull`，链接自动生效。
 
+#### Windows 用户注意
+
+Windows 上 Bun 的 bin 目录不会自动加入 PATH，需要手动配置：
+
+1. **方法一：临时运行**
+   ```powershell
+   ~\.bun\bin\claudeme
+   ```
+
+2. **方法二：永久配置 PATH（推荐）**
+   - 打开 **系统设置** → **高级系统设置** → **环境变量**
+   - 在 **系统变量** 中找到 `Path`，点击 **编辑**
+   - 点击 **新建**，添加：`C:\Users\你的用户名\.bun\bin`
+   - 点击 **确定** 保存，**重启 PowerShell**
+   - 之后即可直接运行 `claudeme`
+
+3. **方法三：PowerShell 别名**
+   ```powershell
+   # 添加到 PowerShell 配置文件
+   notepad $PROFILE
+
+   # 在文件中添加：
+   Set-Alias -Name claudeme -Value "$HOME\.bun\bin\claudeme"
+   ```
+
 启动后即处于 **Bypass Permissions** 模式，所有工具调用自动放行，不会弹确认。
 
 ### 切换模型

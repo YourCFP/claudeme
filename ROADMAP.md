@@ -330,6 +330,157 @@ interface WikiSourceAdapter {
 
 ---
 
+### 近中期：Skill 蒸馏引擎（v1.2）
+
+Wiki 管"记住"，Skill 蒸馏管"会用"。Wiki 是大脑的记忆区，Skill 蒸馏是大脑的**肌肉记忆**——把积累的知识炼化成条件反射式的可调用能力。
+
+#### 背景：社区 Skill 蒸馏生态
+
+2026 年上半年，围绕 Claude Code Skills 的蒸馏生态爆发：
+
+| 项目 | 思路 | 核心技术 |
+|------|------|----------|
+| **skill-distillery** | 造 skill 的 skill | 底层原则抽取 + 心智模型提炼 + 交互式架构设计 |
+| **pdf2skills** | PDF 书 → Skill 全链路 | 语义分块 → 密度分析 → 知识单元(SKU)提取 → 融合 → 生成 |
+| **claudecode-architecture-guide** | 源码 → 架构 Skill | 51万行代码蒸馏为12条原则 + 18个模式 + 87项清单 |
+| **boss-skills / teammate-to-skill** | 人 → Skill | 从沟通记录蒸馏出人的决策模式和工作风格 |
+
+社区验证了一条路径：**任何知识源（书/文档/代码/人/经验）都能蒸馏成结构化 SKILL.md**。
+
+ClaudeMe 的独特优势：**我们已经有 Wiki 知识库了**。别人要从原始文档开始蒸馏，我们从已经结构化的知识图谱开始，起点更高，蒸馏质量更好。
+
+#### 设计哲学：Wiki × Skill 双循环
+
+```
+                    ┌─────────────────────────────────────┐
+                    │         双循环增强系统                │
+                    │                                     │
+  知识源 ──→ Wiki   │   Wiki ──→ Skill Distillery ──→ Skills │
+  (记住)            │   (结构化)    (蒸馏引擎)      (会用)   │
+                    │       ↑                        │     │
+                    │       └────── 经验回写 ←────────┘     │
+                    │                                     │
+                    │   使用 Skill → 产生新经验 → 回写 Wiki  │
+                    └─────────────────────────────────────┘
+```
+
+- **Wiki → Skill**：从积累的知识中蒸馏出可调用的 Skill
+- **Skill → Wiki**：Skill 使用过程中产生的经验、踩坑、优化回写 Wiki
+- **双循环**：知识越用越精，能力越用越强
+
+#### Phase D1: 蒸馏基础设施（3-5天）→ v1.2.0
+
+**核心交付**：
+- `src/distill/` 模块——蒸馏引擎核心
+- `/distill` 命令族
+- 遵循 [Agent Skills](https://agentskills.io) 开放标准输出
+
+**蒸馏管线（6 阶段）**：
+
+```
+ Stage 1: 素材收集
+  ├── 从 Wiki 页面收集（entity/topic/synthesis）
+  ├── 从本地文件/目录收集
+  └── 从 URL 收集
+         ↓
+ Stage 2: 语义分块
+  ├── 按主题聚类
+  ├── 去噪（过滤低密度内容）
+  └── 保留核心论证链
+         ↓
+ Stage 3: 知识单元提取（SKU）
+  ├── LLM 提取：原则、模式、决策启发式、反模式
+  ├── 置信度标注（verified/inferred/unverified）
+  └── 每个 SKU 带示例和适用场景
+         ↓
+ Stage 4: 知识融合
+  ├── 跨素材去重（同一原则不同表述合并）
+  ├── 标签归一化
+  └── 冲突检测（不同素材对同一问题的矛盾观点）
+         ↓
+ Stage 5: Skill 架构设计
+  ├── LLM 判断：简单 skill（单文件）还是 router skill（多文件）
+  ├── 设计交互模式（发现阶段、模式检测、等待门控）
+  └── 生成 SKILL.md frontmatter（name/description/invocation）
+         ↓
+ Stage 6: Skill 生成
+  ├── 生成 SKILL.md 主文件
+  ├── 生成 references/ 参考文档
+  ├── 生成 templates/（如有模板场景）
+  └── 写入 ~/.claude/skills/<skill-name>/
+```
+
+**命令设计**：
+
+```bash
+# 从 Wiki 蒸馏——最核心的用法
+/distill wiki "微服务架构"          # 从 Wiki 中与"微服务架构"相关的页面蒸馏
+/distill wiki --topic "AI工程"      # 按 topic 页蒸馏
+/distill wiki --entity "OpenClaw"   # 按 entity 页蒸馏
+/distill wiki --all                 # 全量蒸馏（按主题自动分组）
+
+# 从外部素材蒸馏
+/distill file ~/papers/raft.pdf     # 从单个文件蒸馏
+/distill url https://...            # 从 URL 蒸馏
+/distill dir ~/kbase/go-patterns/   # 从目录蒸馏
+
+# 管理
+/distill list                       # 查看已蒸馏的 Skills
+/distill audit <skill-name>         # 审计已有 Skill 质量（5维评估）
+/distill refresh <skill-name>       # 用最新 Wiki 内容刷新 Skill
+```
+
+**蒸馏专属模型配置**：
+
+```json
+{
+  "distill": {
+    "model": "provider/cheap-model",
+    "concurrency": 10,
+    "auto_refresh": true
+  }
+}
+```
+
+可以配独立模型跑蒸馏（和 Wiki 一样，用便宜模型干重活）。
+
+**输出结构**：
+
+```
+~/.claude/skills/
+└── microservice-arch/              # 蒸馏生成的 Skill
+    ├── SKILL.md                    # 入口：5 条核心原则 + 决策树 + 调用方式
+    ├── references/
+    │   ├── patterns.md             # 设计模式详解（带代码示例）
+    │   ├── anti-patterns.md        # 反模式和踩坑记录
+    │   ├── decision-framework.md   # 决策框架（何时用/何时不用）
+    │   └── sources.md              # 蒸馏来源（Wiki 页面列表 + 置信度）
+    └── templates/
+        └── service-scaffold.md     # 服务脚手架模板
+```
+
+**与 Wiki 的联动**：
+- SKILL.md 的 `sources.md` 记录蒸馏来源，可追溯到 Wiki 原始页面
+- Wiki 页面更新后，`/distill refresh` 可以增量更新对应 Skill
+- Skill 使用过程中的反馈可以通过 `/wiki ingest` 回写知识库
+
+#### Phase D2: 智能蒸馏（v1.2.1+）
+
+- **自动蒸馏触发** — Wiki scan 完成后，检测高密度主题自动蒸馏
+- **蒸馏质量评估** — 5 维打分：原则提炼度、可操作性、交互设计、跨 Agent 兼容、知识新鲜度
+- **增量蒸馏** — Wiki 新增页面后，自动判断是否需要更新已有 Skill
+- **人格蒸馏** — 从对话历史蒸馏出工作风格 Skill（为 v2.x Persona 层铺路）
+- **经验蒸馏** — 从对话中的决策、踩坑、解法自动蒸馏成 Skill
+
+#### Phase D3: Skill 生态（v1.3+）
+
+- **Skill 市场** — 分享你蒸馏的 Skill，安装别人蒸馏的 Skill
+- **跨 Agent 兼容** — 输出的 Skill 可直接用在 Claude Code / Cursor / Codex / OpenCode / Gemini CLI
+- **Skill 组合** — 多个 Skill 组合成 Skill Pack（比如"全栈开发者套件"）
+- **Skill 版本管理** — 蒸馏历史、版本对比、回滚
+
+---
+
 ### 中期：灵魂层 + 人格层（v2.x）
 
 知识大脑做好后，开始塑造分身的"灵魂"和"人格"。
@@ -432,6 +583,8 @@ interface WikiSourceAdapter {
 | **v1.0.1** | 零确认模式 + 厂商分组配置 ✅ | 更顺手的工具 |
 | **v1.0.2** | Wiki 知识库（Ingest+Query+Lint+Scan） ✅ | 能学习的工具 |
 | **v1.1** | Wiki 进化（向量检索、模型主动查询、经验回写） | 有知识的助手 |
+| **v1.2** | Skill 蒸馏引擎（Wiki→Skill、文件/URL→Skill） | 知识变能力的助手 |
+| **v1.3** | Skill 生态（市场、跨 Agent、组合、版本管理） | 能力可共享的助手 |
 | **v2.0** | Soul 灵魂初始化 | 有灵魂的分身 |
 | **v2.1** | Persona 人格建模 | 说话像你的分身 |
 | **v2.2** | 灵魂进化 | 越来越像你的分身 |
@@ -444,14 +597,15 @@ interface WikiSourceAdapter {
 
 1. **渐进生长，不是一步到位**——分身是"长出来的"，不是"配出来的"
 2. **灵魂 > 人格 > 知识 > 能力**——能力最容易补，灵魂最难塑造
-3. **每个版本独立有价值**——不用等到 v3.0 才能用，v1.2 就比现在强
+3. **每个版本独立有价值**——不用等到 v3.0 才能用，v1.2 的蒸馏引擎就比纯 Wiki 强一个量级
 4. **用户控制权**——分身的每一层都可以查看、编辑、删除。你的分身，你做主
 5. **隐私第一**——所有数据本地存储，不上传，不共享（除非用户主动开启）
 
 ## 一句话
 
-> v1 让它能干活，v2 让它像你，v3 让它成为你。
+> v1 让它能干活、会学习、能蒸馏，v2 让它像你，v3 让它成为你。
 
 ---
 
 *创建于 2026-04-12，更新于 2026-04-12，ClaudeMe v1.0.2*
+*Skill 蒸馏方案更新于 2026-04-12*
