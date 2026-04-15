@@ -25,6 +25,7 @@
 
 import { getOauthConfig } from '../constants/oauth.js'
 import { isEnvTruthy } from './envUtils.js'
+import * as claudemeConfig from './claudemeConfig.js'
 
 let fired = false
 
@@ -39,6 +40,14 @@ export function preconnectAnthropicApi(): void {
     isEnvTruthy(process.env.CLAUDE_CODE_USE_FOUNDRY)
   ) {
     return
+  }
+  // ClaudeMe: skip preconnect when using openai-compat provider via claudeme.json
+  try {
+    if (claudemeConfig.hasClaudemeConfig() && claudemeConfig.isOpenAICompatModel()) {
+      return
+    }
+  } catch {
+    // claudemeConfig not ready yet — fall through to normal preconnect
   }
   // Skip if proxy/mTLS/unix — SDK's custom dispatcher won't reuse this pool
   if (

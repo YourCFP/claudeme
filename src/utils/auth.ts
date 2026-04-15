@@ -1,3 +1,4 @@
+import * as claudemeConfig from './claudemeConfig.js'
 import chalk from 'chalk'
 import { exec } from 'child_process'
 import { execa } from 'execa'
@@ -95,6 +96,18 @@ function isManagedOAuthContext(): boolean {
   )
 }
 
+/**
+ * ClaudeMe: Check if current model is configured as openai-compat via claudeme.json.
+ * When true, Anthropic auth / preflight / preconnect should be skipped entirely.
+ */
+function isClaudemeOpenAICompat(): boolean {
+  try {
+    return claudemeConfig.hasClaudemeConfig() && claudemeConfig.isOpenAICompatModel()
+  } catch {
+    return false
+  }
+}
+
 /** Whether we are supporting direct 1P auth. */
 // this code is closely related to getAuthTokenSource
 export function isAnthropicAuthEnabled(): boolean {
@@ -110,6 +123,11 @@ export function isAnthropicAuthEnabled(): boolean {
   // "invalid x-api-key" from the API. See src/ssh/sshAuthProxy.ts.
   if (process.env.ANTHROPIC_UNIX_SOCKET) {
     return !!process.env.CLAUDE_CODE_OAUTH_TOKEN
+  }
+
+  // ClaudeMe: using openai-compat provider via claudeme.json — skip Anthropic auth
+  if (isClaudemeOpenAICompat()) {
+    return false
   }
 
   const is3P =
