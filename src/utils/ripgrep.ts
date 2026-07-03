@@ -1,5 +1,6 @@
 import type { ChildProcess, ExecFileException } from 'child_process'
 import { execFile, spawn } from 'child_process'
+import { existsSync } from 'fs'
 import memoize from 'lodash-es/memoize.js'
 import { homedir } from 'os'
 import * as path from 'path'
@@ -60,6 +61,24 @@ const getRipgrepConfig = memoize((): RipgrepConfig => {
     process.platform === 'win32'
       ? path.resolve(rgRoot, `${process.arch}-win32`, 'rg.exe')
       : path.resolve(rgRoot, `${process.arch}-${process.platform}`, 'rg')
+
+  // ClaudeMe: 源码运行（bun run dev / bun link）时仓库不含 vendored rg
+  // 二进制（原版由 npm 打包注入）。二进制不存在则自动降级到系统 rg，
+  // 系统也没有才报错并给出安装指引——保证 clone 下来搜索开箱即用。
+  if (!existsSync(command)) {
+    const { cmd: systemPath } = findExecutable('rg', [])
+    if (systemPath !== 'rg') {
+      // SECURITY: 同上，用命令名 'rg' 由 OS 安全解析，防 PATH 劫持
+      return { mode: 'system', command: 'rg', args: [] }
+    }
+    logError(
+      new Error(
+        `ripgrep 不可用：内置二进制不存在（${command}），系统 PATH 中也未找到 rg。` +
+          '代码搜索功能将不可用。请安装 ripgrep：macOS `brew install ripgrep`，' +
+          'Linux `apt/yum install ripgrep`，Windows `winget install BurntSushi.ripgrep.MSVC`',
+      ),
+    )
+  }
 
   return { mode: 'builtin', command, args: [] }
 })
