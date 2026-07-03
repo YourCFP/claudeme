@@ -91,10 +91,10 @@ ClaudeMe 内置了一套**个人知识库系统**，将你的技术文档、笔�
 
 ### 知识库结构
 
-Wiki 知识库存储在 `~/.claude/wiki/`，结构如下：
+Wiki 知识库存储在 `~/.myccm/wiki/`，结构如下：
 
 ```
-~/.claude/wiki/
+~/.myccm/wiki/
 ├── index.md              — 知识索引（实体/主题/素材摘要列表）
 ├── log.md                — 操作日志
 ├── raw/articles/         — 原始素材备份（带 SHA256 哈希命名）
@@ -147,11 +147,16 @@ Wiki 知识库存储在 `~/.claude/wiki/`，结构如下：
 
 - [Bun](https://bun.sh) 1.3.5+
 - Node.js 24+
+- [ripgrep](https://github.com/BurntSushi/ripgrep)（可选，推荐）— 代码搜索用。macOS：`brew install ripgrep`；Linux：`apt/yum install ripgrep`；Windows：`winget install BurntSushi.ripgrep.MSVC`
 
 ### 安装
 
 ```bash
+# SSH 方式（需已配置 GitHub SSH key）
 git clone git@github.com:zrt-ai-lab/claudeme.git
+# 或 HTTPS 方式
+git clone https://github.com/zrt-ai-lab/claudeme.git
+
 cd claudeme
 bun install
 ```
@@ -235,7 +240,7 @@ bun link
 claudeme
 ```
 
-`bun link` 会在 `~/.bun/bin/` 创建符号链接指向项目，无需每次 cd 到项目目录。更新代码只需 `git pull`，链接自动生效。
+`bun link` 会在 `~/.bun/bin/` 创建符号链接指向项目，无需每次 cd 到项目目录。之后升级只需 `git pull`——新依赖会在下次启动时自动安装（详见「升级」章节）。
 
 #### Windows 用户注意
 
@@ -276,9 +281,11 @@ Claude 4.6 Sonnet     claude-sonnet · 视觉+工具
 DeepSeek V3           deepseek-chat · 工具
 ```
 
+> `/model` 切换仅对当前会话生效，重启后回到 `claudeme.json` 里 `default` 指定的模型。想改默认模型，编辑 `default` 字段即可。
+
 ## 与 Claude Code 共存
 
-ClaudeMe 和原版 Claude Code 共享 `~/.claude/` 配置目录（包括 `settings.json`、CLAUDE.md 等），可以在同一台机器上同时安装，互不干扰。
+ClaudeMe 使用独立的配置目录 `~/.myccm/`（原版 Claude Code 用 `~/.claude/`），可以在同一台机器上同时安装，**数据完全隔离、互不干扰**——各自的 settings、历史记录、缓存互不影响。
 
 区别在于：
 - **原版 Claude Code** 需要手动传 `--dangerously-skip-permissions` 才能跳过确认
@@ -286,15 +293,21 @@ ClaudeMe 和原版 Claude Code 共享 `~/.claude/` 配置目录（包括 `settin
 
 ## 升级
 
-已全局安装的用户，升级只需：
+已全局安装的用户，升级只需一行：
 
 ```bash
-cd /path/to/claudeme   # 进入 claudeme 项目目录
-git pull               # 拉取最新代码
-bun install            # 更新依赖（如有变化）
+cd /path/to/claudeme && git pull
 ```
 
-`bun link` 创建的符号链接自动指向最新代码，无需重新 link。
+下次运行 `claudeme` 时会**自动完成剩余工作**：
+
+- 🔄 **自动装依赖** — 若新版本引入了新依赖，启动时检测到缺失会自动执行 `bun install` 并重启，无需手动操作
+- 🔗 **符号链接自动生效** — `bun link` 指向项目目录，代码更新即时生效，无需重新 link
+- 🔍 **搜索开箱即用** — 内置 ripgrep 二进制缺失时自动降级为系统 `rg`
+
+若自动装依赖失败（如网络问题），会给出明确的中文指引，手动执行 `bun install` 即可。
+
+> 版本更新偶尔会调整 `claudeme.json` 结构（如 v1.0.1 从 `models` 平铺改为 `providers` 分组）。若启动提示配置无效，按提示对照最新的 `claudeme.example.json` 迁移即可。
 
 ## 版本历史
 
