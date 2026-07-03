@@ -109,9 +109,9 @@ describe('findMissingDependencies', () => {
         dependencies: { 'local-shim': 'file:./shims/local-shim' },
       }),
     )
-    // file: 依赖即使 node_modules 里没有也不应触发自动安装死循环，
-    // 但正常 bun install 后会有链接——这里验证"缺失时会被报出"，
-    // 因为 bun install 能修复它（创建符号链接）
+    // file: 依赖缺失时同样会被报出——bun install 能修复它（创建符号
+    // 链接）。若 install 后仍无法解析，CLAUDEME_BOOTSTRAP_RETRY 防线
+    // 保证同一进程只重试一次，不会死循环
     const missing = findMissingDependencies(dir)
     expect(missing).toEqual(['local-shim'])
   })

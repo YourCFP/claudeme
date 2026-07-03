@@ -119,13 +119,13 @@ function getConfigCandidatePaths(): string[] {
 }
 
 /**
- * 查找 claudeme.json 的路径
+ * 查找并读取第一个可读的 claudeme.json（一次 read 同时完成探测与加载，
+ * 避免"先测可读再重读"的双读与 TOCTOU）
  */
-function findConfigPath(): string | null {
+function readFirstConfig(): { path: string; raw: string } | null {
   for (const p of getConfigCandidatePaths()) {
     try {
-      readFileSync(p, 'utf8') // 仅测试可读
-      return p
+      return { path: p, raw: readFileSync(p, 'utf8') }
     } catch {
       // 继续尝试下一个
     }
@@ -194,14 +194,14 @@ function loadConfig(): ClaudemeConfig | null {
 
   _configLoaded = true
 
-  const configPath = findConfigPath()
-  if (!configPath) {
+  const found = readFirstConfig()
+  if (!found) {
     _diagnostics = { status: 'not_found', searchedPaths: getConfigCandidatePaths() }
     return null
   }
+  const { path: configPath, raw } = found
 
   try {
-    const raw = readFileSync(configPath, 'utf8')
     const parsed = JSON.parse(raw)
 
     // 校验基本结构
@@ -234,6 +234,8 @@ function loadConfig(): ClaudemeConfig | null {
     _diagnostics = {
       status: 'invalid',
       configPath,
+      // 不用 utils/errors.js 的 errorMessage：它 value-import 整个
+      // @anthropic-ai/sdk，本模块在启动最早期加载，不能背这个体积
       reason: err instanceof Error ? err.message : String(err),
     }
     logError(err as Error)
@@ -249,8 +251,11 @@ function loadConfig(): ClaudemeConfig | null {
  */
 export function getClaudemeConfigDiagnostics(): ClaudemeConfigDiagnostics {
   loadConfig()
-  // loadConfig 执行后 _diagnostics 必然已赋值；兜底仅为类型安全
-  return _diagnostics ?? { status: 'not_found', searchedPaths: getConfigCandidatePaths() }
+  if (!_diagnostics) {
+    // loadConfig 的所有退出路径都会赋值 _diagnostics，此分支不可达
+    throw new Error('claudemeConfig: diagnostics not set after loadConfig()')
+  }
+  return _diagnostics
 }
 
 /**

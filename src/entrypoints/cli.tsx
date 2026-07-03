@@ -47,28 +47,15 @@ async function main(): Promise<void> {
   } = await import('../utils/startupProfiler.js');
   profileCheckpoint('cli_entry');
 
-  // ─── ClaudeMe: 自治模式启动检查 + 环境变量隔离 ───
-  // 1. 没有有效 claudeme.json → 快速失败并给出中文指引（--help 除外），
-  //    避免静默 fallback 到 Anthropic 原生路径（onboarding preflight
-  //    连接 api.anthropic.com 报 ERR_BAD_REQUEST 等诡异错误）。
-  // 2. 有 claudeme.json → 在任何下游模块读取 process.env.ANTHROPIC_*
-  //    之前（含 SDK 构造函数 readEnv 兜底、ApproveApiKey 启动弹窗、
-  //    status 展示等）一次性删除这些变量，与 Anthropic 完全解耦。
+  // ─── ClaudeMe: 自治模式环境变量隔离 ───
+  // 有 claudeme.json → 在任何下游模块读取 process.env.ANTHROPIC_* 之前
+  // （含 SDK 构造函数 readEnv 兜底、ApproveApiKey 启动弹窗、status 展示等）
+  // 一次性删除这些变量，与 Anthropic 完全解耦。无配置时是 no-op。
+  // 配置缺失的快速失败检查在 fast-path 之后（见下方 main.js 加载前），
+  // 以免误伤不需要模型配置的子命令（update / doctor / MCP server 等）。
   const {
-    sanitizeAnthropicEnv,
-    getClaudemeConfigDiagnostics
+    sanitizeAnthropicEnv
   } = await import('../utils/claudemeConfig.js');
-  const claudemeDiag = getClaudemeConfigDiagnostics();
-  if (claudemeDiag.status !== 'ok' && !args.includes('--help') && !args.includes('-h')) {
-    const {
-      formatClaudemeConfigError
-    } = await import('../utils/claudemeStartupCheck.js');
-    const configError = formatClaudemeConfigError(claudemeDiag);
-    if (configError) {
-      process.stderr.write(`${configError}\n`);
-      process.exit(1);
-    }
-  }
   sanitizeAnthropicEnv();
   profileCheckpoint('cli_claudeme_env_sanitized');
   // ─── End ClaudeMe ───
@@ -309,6 +296,30 @@ async function main(): Promise<void> {
   if (args.includes('--bare')) {
     process.env.CLAUDE_CODE_SIMPLE = '1';
   }
+
+  // ─── ClaudeMe: 配置缺失快速失败 ───
+  // 走到这里说明即将进入完整 CLI（交互会话 / -p 模式 / commander 子命令）。
+  // 没有有效 claudeme.json 会静默 fallback 到 Anthropic 原生路径
+  // （onboarding preflight 连 api.anthropic.com 报 ERR_BAD_REQUEST 等
+  // 误导性错误），这里提前拦截并给出中文指引。
+  // 豁免 --help 和 update（用户需要能自助升级修复配置问题）。
+  const {
+    getClaudemeConfigDiagnostics
+  } = await import('../utils/claudemeConfig.js');
+  const claudemeDiag = getClaudemeConfigDiagnostics();
+  if (claudemeDiag.status !== 'ok' && !args.includes('--help') && !args.includes('-h') && args[0] !== 'update') {
+    const {
+      formatClaudemeConfigError
+    } = await import('../utils/claudemeStartupCheck.js');
+    const configError = formatClaudemeConfigError(claudemeDiag);
+    if (configError) {
+      const {
+        exitWithError
+      } = await import('../utils/process.js');
+      exitWithError(configError);
+    }
+  }
+  // ─── End ClaudeMe ───
 
   // No special flags detected, load and run the full CLI
   const {

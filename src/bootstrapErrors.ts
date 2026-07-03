@@ -70,6 +70,17 @@ export function isMissingDependencyError(err: unknown): boolean {
   return extractPackageName(message) !== null
 }
 
+/** 手动修复指引（自动安装失败时的兜底文案，多处复用） */
+export function formatManualInstallGuidance(projectRoot: string): string {
+  return [
+    '请手动执行：',
+    `  cd ${projectRoot}`,
+    '  bun install',
+    '',
+    '然后重新启动 claudeme。',
+  ].join('\n')
+}
+
 /** 生成用户可读的中文修复指引（自动安装失败时的兜底） */
 export function formatMissingDependencyError(
   err: unknown,
@@ -80,11 +91,7 @@ export function formatMissingDependencyError(
   return [
     `✗ 依赖缺失：找不到包 "${pkgName}"，且自动安装未成功。`,
     '',
-    '请手动执行：',
-    `  cd ${projectRoot}`,
-    '  bun install',
-    '',
-    '然后重新启动 claudeme。',
+    formatManualInstallGuidance(projectRoot),
   ].join('\n')
 }
 

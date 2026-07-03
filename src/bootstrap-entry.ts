@@ -3,6 +3,7 @@ import { dirname, join } from 'path'
 import { fileURLToPath } from 'url'
 import {
   findMissingDependencies,
+  formatManualInstallGuidance,
   formatMissingDependencyError,
   isMissingDependencyError,
   tryAutoInstallDependencies,
@@ -47,7 +48,7 @@ if (!alreadyRetried) {
       restartAfterInstall()
     }
     process.stderr.write(
-      `✗ 自动安装失败。请手动执行：\n  cd ${projectRoot}\n  bun install\n然后重新启动 claudeme。\n`,
+      `✗ 自动安装失败。${formatManualInstallGuidance(projectRoot)}\n`,
     )
     process.exit(1)
   }

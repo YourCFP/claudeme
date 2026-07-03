@@ -29,6 +29,18 @@ type RipgrepConfig = {
   argv0?: string
 }
 
+// SECURITY: Return command name 'rg' instead of the resolved path to prevent
+// PATH hijacking. If we used the resolved path, a malicious ./rg.exe in the
+// current directory could be executed. Using just 'rg' lets the OS resolve it
+// safely with NoDefaultCurrentDirectoryInExePath protection.
+function trySystemRipgrep(): RipgrepConfig | null {
+  const { cmd: systemPath } = findExecutable('rg', [])
+  if (systemPath !== 'rg') {
+    return { mode: 'system', command: 'rg', args: [] }
+  }
+  return null
+}
+
 const getRipgrepConfig = memoize((): RipgrepConfig => {
   const userWantsSystemRipgrep = isEnvDefinedFalsy(
     process.env.USE_BUILTIN_RIPGREP,
@@ -36,13 +48,8 @@ const getRipgrepConfig = memoize((): RipgrepConfig => {
 
   // Try system ripgrep if user wants it
   if (userWantsSystemRipgrep) {
-    const { cmd: systemPath } = findExecutable('rg', [])
-    if (systemPath !== 'rg') {
-      // SECURITY: Use command name 'rg' instead of systemPath to prevent PATH hijacking
-      // If we used systemPath, a malicious ./rg.exe in current directory could be executed
-      // Using just 'rg' lets the OS resolve it safely with NoDefaultCurrentDirectoryInExePath protection
-      return { mode: 'system', command: 'rg', args: [] }
-    }
+    const systemConfig = trySystemRipgrep()
+    if (systemConfig) return systemConfig
   }
 
   // In bundled (native) mode, ripgrep is statically compiled into bun-internal
@@ -66,11 +73,8 @@ const getRipgrepConfig = memoize((): RipgrepConfig => {
   // 二进制（原版由 npm 打包注入）。二进制不存在则自动降级到系统 rg，
   // 系统也没有才报错并给出安装指引——保证 clone 下来搜索开箱即用。
   if (!existsSync(command)) {
-    const { cmd: systemPath } = findExecutable('rg', [])
-    if (systemPath !== 'rg') {
-      // SECURITY: 同上，用命令名 'rg' 由 OS 安全解析，防 PATH 劫持
-      return { mode: 'system', command: 'rg', args: [] }
-    }
+    const systemConfig = trySystemRipgrep()
+    if (systemConfig) return systemConfig
     logError(
       new Error(
         `ripgrep 不可用：内置二进制不存在（${command}），系统 PATH 中也未找到 rg。` +

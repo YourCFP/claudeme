@@ -82,17 +82,20 @@ describe('sanitizeAnthropicEnv', () => {
     }
   })
 
-  test('没有 claudeme.json 时保留环境变量', () => {
+  // 本仓库根目录存在真实 claudeme.json（gitignored），CLAUDEME_CONFIG 指向
+  // 不存在的文件时会 fallback 命中它——not_found 分支在此环境不可测，
+  // 显式 skip 而不是静默通过
+  const realConfigReachable = hasClaudemeConfig()
+
+  test.skipIf(realConfigReachable)('没有 claudeme.json 时保留环境变量', () => {
     process.env.CLAUDEME_CONFIG = join(dir, 'nonexistent.json')
     process.env.ANTHROPIC_API_KEY = 'keep-me'
     process.env.ANTHROPIC_BASE_URL = 'http://keep.me'
+    resetClaudemeConfig()
 
-    // 防御：确保 fallback 路径（cwd 等）没有意外命中真实配置
-    if (!hasClaudemeConfig()) {
-      sanitizeAnthropicEnv()
-      expect(process.env.ANTHROPIC_API_KEY).toBe('keep-me')
-      expect(process.env.ANTHROPIC_BASE_URL).toBe('http://keep.me')
-    }
+    sanitizeAnthropicEnv()
+    expect(process.env.ANTHROPIC_API_KEY).toBe('keep-me')
+    expect(process.env.ANTHROPIC_BASE_URL).toBe('http://keep.me')
   })
 
   test('api_key 使用 $ANTHROPIC_API_KEY 引用时先解析后删除', async () => {
@@ -138,11 +141,16 @@ describe('getClaudemeConfigDiagnostics', () => {
     expect(diag.status).toBe('ok')
   })
 
-  test('找不到文件时返回 not_found 并列出搜索路径', () => {
+  // 同上：仓库根目录的真实 claudeme.json 会被 fallback 命中，
+  // not_found 分支在此环境不可测，显式 skip
+  const realConfigReachable = hasClaudemeConfig()
+
+  test.skipIf(realConfigReachable)('找不到文件时返回 not_found 并列出搜索路径', () => {
     process.env.CLAUDEME_CONFIG = join(dir, 'nonexistent.json')
+    resetClaudemeConfig()
 
     const diag = getClaudemeConfigDiagnostics()
-    // 防御：cwd/项目根/home 兜底可能命中真实配置，此时跳过断言
+    expect(diag.status).toBe('not_found')
     if (diag.status === 'not_found') {
       expect(diag.searchedPaths.length).toBeGreaterThan(0)
       expect(diag.searchedPaths[0]).toBe(join(dir, 'nonexistent.json'))
