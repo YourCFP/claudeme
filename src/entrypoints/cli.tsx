@@ -47,6 +47,32 @@ async function main(): Promise<void> {
   } = await import('../utils/startupProfiler.js');
   profileCheckpoint('cli_entry');
 
+  // ─── ClaudeMe: 自治模式启动检查 + 环境变量隔离 ───
+  // 1. 没有有效 claudeme.json → 快速失败并给出中文指引（--help 除外），
+  //    避免静默 fallback 到 Anthropic 原生路径（onboarding preflight
+  //    连接 api.anthropic.com 报 ERR_BAD_REQUEST 等诡异错误）。
+  // 2. 有 claudeme.json → 在任何下游模块读取 process.env.ANTHROPIC_*
+  //    之前（含 SDK 构造函数 readEnv 兜底、ApproveApiKey 启动弹窗、
+  //    status 展示等）一次性删除这些变量，与 Anthropic 完全解耦。
+  const {
+    sanitizeAnthropicEnv,
+    getClaudemeConfigDiagnostics
+  } = await import('../utils/claudemeConfig.js');
+  const claudemeDiag = getClaudemeConfigDiagnostics();
+  if (claudemeDiag.status !== 'ok' && !args.includes('--help') && !args.includes('-h')) {
+    const {
+      formatClaudemeConfigError
+    } = await import('../utils/claudemeStartupCheck.js');
+    const configError = formatClaudemeConfigError(claudemeDiag);
+    if (configError) {
+      process.stderr.write(`${configError}\n`);
+      process.exit(1);
+    }
+  }
+  sanitizeAnthropicEnv();
+  profileCheckpoint('cli_claudeme_env_sanitized');
+  // ─── End ClaudeMe ───
+
   // Fast-path for --dump-system-prompt: output the rendered system prompt and exit.
   // Used by prompt sensitivity evals to extract the system prompt at a specific commit.
   // Ant-only: eliminated from external builds via feature flag.

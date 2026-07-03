@@ -65,11 +65,22 @@ export interface ClaudemeConfig {
   readonly providers: Readonly<Record<string, { name: string }>>
 }
 
+/** 配置加载诊断结果：让"为什么没生效"可见，杜绝静默失败 */
+export type ClaudemeConfigDiagnostics =
+  | { readonly status: 'ok'; readonly configPath: string }
+  | { readonly status: 'not_found'; readonly searchedPaths: readonly string[] }
+  | {
+      readonly status: 'invalid'
+      readonly configPath: string
+      readonly reason: string
+    }
+
 // ─── 模块状态（惰性加载，不可变） ───
 
 let _config: ClaudemeConfig | null = null
 let _configLoaded = false
 let _currentModelKey: string | null = null
+let _diagnostics: ClaudemeConfigDiagnostics | null = null
 
 // ─── 配置加载 ───
 
@@ -86,10 +97,10 @@ function resolveApiKey(raw: string | undefined): string | undefined {
 }
 
 /**
- * 查找 claudeme.json 的路径
+ * 计算 claudeme.json 的候选路径列表
  * 优先级: CLAUDEME_CONFIG 环境变量 > CWD > 项目根目录 > ~/.config/claudeme/ > ~/
  */
-function findConfigPath(): string | null {
+function getConfigCandidatePaths(): string[] {
   // 项目根目录：从当前文件位置向上推导
   const projectRoot = join(dirname(new URL(import.meta.url).pathname), '..', '..')
   const home = homedir()
@@ -102,10 +113,16 @@ function findConfigPath(): string | null {
 
   // 如果 CLAUDEME_CONFIG 环境变量指定了路径，优先用
   if (process.env.CLAUDEME_CONFIG) {
-    candidates.unshift(process.env.CLAUDEME_CONFIG)
+    return [process.env.CLAUDEME_CONFIG, ...candidates]
   }
+  return candidates
+}
 
-  for (const p of candidates) {
+/**
+ * 查找 claudeme.json 的路径
+ */
+function findConfigPath(): string | null {
+  for (const p of getConfigCandidatePaths()) {
     try {
       readFileSync(p, 'utf8') // 仅测试可读
       return p
@@ -170,7 +187,7 @@ function normalizeProviders(
 }
 
 /**
- * 加载并解析 claudeme.json
+ * 加载并解析 claudeme.json，同时记录诊断信息（_diagnostics）
  */
 function loadConfig(): ClaudemeConfig | null {
   if (_configLoaded) return _config
@@ -179,6 +196,7 @@ function loadConfig(): ClaudemeConfig | null {
 
   const configPath = findConfigPath()
   if (!configPath) {
+    _diagnostics = { status: 'not_found', searchedPaths: getConfigCandidatePaths() }
     return null
   }
 
@@ -188,7 +206,9 @@ function loadConfig(): ClaudemeConfig | null {
 
     // 校验基本结构
     if (!parsed.default || !parsed.providers || typeof parsed.providers !== 'object') {
-      logError(new Error('claudeme.json: missing "default" or "providers" field'))
+      const reason = 'missing "default" or "providers" field'
+      _diagnostics = { status: 'invalid', configPath, reason }
+      logError(new Error(`claudeme.json: ${reason}`))
       return null
     }
 
@@ -196,9 +216,9 @@ function loadConfig(): ClaudemeConfig | null {
 
     // 校验 default 指向有效模型
     if (!models[parsed.default]) {
-      logError(
-        new Error(`claudeme.json: default model "${parsed.default}" not found in providers`),
-      )
+      const reason = `default model "${parsed.default}" not found in providers`
+      _diagnostics = { status: 'invalid', configPath, reason }
+      logError(new Error(`claudeme.json: ${reason}`))
       return null
     }
 
@@ -207,15 +227,53 @@ function loadConfig(): ClaudemeConfig | null {
       models,
       providers: providerMeta,
     }
+    _diagnostics = { status: 'ok', configPath }
 
     return _config
   } catch (err) {
+    _diagnostics = {
+      status: 'invalid',
+      configPath,
+      reason: err instanceof Error ? err.message : String(err),
+    }
     logError(err as Error)
     return null
   }
 }
 
 // ─── 公共 API ───
+
+/**
+ * 获取配置加载诊断：ok / not_found（含搜索路径）/ invalid（含具体原因）。
+ * 供启动期检查使用，把"配置为什么没生效"直接告诉用户。
+ */
+export function getClaudemeConfigDiagnostics(): ClaudemeConfigDiagnostics {
+  loadConfig()
+  // loadConfig 执行后 _diagnostics 必然已赋值；兜底仅为类型安全
+  return _diagnostics ?? { status: 'not_found', searchedPaths: getConfigCandidatePaths() }
+}
+
+/**
+ * ClaudeMe 自治模式：有 claudeme.json 就与 Anthropic 完全解耦。
+ *
+ * 从 process.env 中删除所有 ANTHROPIC_* 环境变量，使下游几十处
+ * `process.env.ANTHROPIC_*` 读取点（含 @anthropic-ai/sdk 构造函数的
+ * readEnv 兜底）自然失效，无需逐点打补丁。
+ *
+ * 必须先 loadConfig()：api_key 支持 "$ENV_VAR" 引用（可能指向
+ * ANTHROPIC_API_KEY），需在删除前解析并缓存到配置中。
+ *
+ * 没有 claudeme.json 时不做任何事（保留原生 Anthropic 路径）。
+ * 应在启动最早期调用（见 src/entrypoints/cli.tsx）。
+ */
+export function sanitizeAnthropicEnv(): void {
+  if (loadConfig() === null) return
+  for (const name of Object.keys(process.env)) {
+    if (name.startsWith('ANTHROPIC_')) {
+      delete process.env[name]
+    }
+  }
+}
 
 /**
  * 获取完整配置（可能为 null）
@@ -344,4 +402,5 @@ export function resetClaudemeConfig(): void {
   _config = null
   _configLoaded = false
   _currentModelKey = null
+  _diagnostics = null
 }
